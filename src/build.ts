@@ -1,9 +1,10 @@
 import path from 'path'
+import { execSync } from 'child_process'
 
 import { createLambda, BuildOptions, download, File, FileBlob, FileFsRef, glob, getNodeVersion, getSpawnOptions, Lambda, runNpmInstall, runPackageJsonScript } from '@vercel/build-utils'
 import type { Route } from '@vercel/routing-utils'
 import consola from 'consola'
-import fs from 'fs-extra'
+import fs, { writeJSON } from 'fs-extra'
 import resolveFrom from 'resolve-from'
 import { gte, gt } from 'semver'
 
@@ -24,6 +25,12 @@ interface NuxtBuilderConfig {
   includeFiles?: string[] | string
   serverFiles?: string[]
   internalServer?: boolean
+
+  buildTimeDependencies?: {
+    dependencies: Array<string | [packageName: string, semVer: string]>
+    devDependencies: Array<string | [packageName: string, semVer: string]>
+  }
+  unusedDependencies?: string[]
 }
 
 export async function build (opts: BuildOptions & { config: NuxtBuilderConfig }): Promise<BuilderOutput> {
@@ -59,6 +66,46 @@ export async function build (opts: BuildOptions & { config: NuxtBuilderConfig })
   } catch (e) {
     throw new Error(`Can not read package.json from ${entrypointPath}`)
   }
+
+  // fork-vercel-builder: Remove unused dependencies
+  const { dependencies, devDependencies } = pkg
+  if (config.unusedDependencies) {
+    let removed = 0
+    consola.log(`fork-vercel-builder: Removing ${config.unusedDependencies.length} unused devDependencies.`)
+
+    config.unusedDependencies.forEach((packageName) => {
+      if (dependencies && packageName in dependencies) {
+        delete dependencies[packageName]
+        removed += 1
+      } else if (devDependencies && packageName in devDependencies) {
+        delete devDependencies[packageName]
+        removed += 1
+      }
+    })
+
+    consola.log(`fork-vercel-builder: Removed ${removed} devDependencies.`)
+  }
+  // fork-vercel-builder: Add build-time dependencies
+  (['dependencies', 'devDependencies'] as const).forEach((depType) => {
+    if (pkg[depType] && config.buildTimeDependencies?.[depType]) {
+      const deps = config.buildTimeDependencies[depType]
+      consola.log(`fork-vercel-builder: Adding ${deps.length} dependencies to ${depType}.`)
+
+      deps.forEach((packageInfo) => {
+        let packageName: string, semver: string
+        if (Array.isArray(packageInfo)) {
+          [packageName, semver] = packageInfo
+        } else {
+          packageName = packageInfo
+          semver = '*'
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        pkg[depType]![packageName] = semver
+      })
+    }
+  })
+  await writeJSON('package.json', pkg)
 
   // Node version
   const nodeVersion = await getNodeVersion(entrypointPath, undefined, {}, meta)
@@ -104,6 +151,7 @@ export async function build (opts: BuildOptions & { config: NuxtBuilderConfig })
 
   // Install all dependencies
   await runNpmInstall(entrypointPath, [
+    '--ignore-optional',
     '--prefer-offline',
     '--frozen-lockfile',
     '--non-interactive',
@@ -166,6 +214,7 @@ export async function build (opts: BuildOptions & { config: NuxtBuilderConfig })
   await fs.writeJSON('package.json', pkg)
 
   await runNpmInstall(entrypointPath, [
+    '--ignore-optional',
     '--prefer-offline',
     '--pure-lockfile',
     '--non-interactive',
@@ -215,6 +264,14 @@ export async function build (opts: BuildOptions & { config: NuxtBuilderConfig })
   // node_modules_prod
   const nodeModulesDir = path.join(entrypointPath, 'node_modules_prod')
   const nodeModules = await globAndPrefix('**', nodeModulesDir, 'node_modules')
+
+  // fork-vercel-builder: Show install size of dependencies
+  const installedPackages = await fs.readdir('node_modules')
+  installedPackages.forEach((filename) => {
+    const filepath = path.join('node_modules', filename)
+    const size = execSync(`du -sb ${filepath} | cut -f1`).toString().trim()
+    consola.log(`${filepath}: ${size}`)
+  })
 
   // Lambdas
   const lambdas: Record<string, Lambda> = {}

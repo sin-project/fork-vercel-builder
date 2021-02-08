@@ -1,8 +1,10 @@
 {
-  "name": "@nuxtjs/vercel-builder",
-  "version": "0.18.1",
-  "repository": "nuxt/vercel-builder",
+  "name": "@sinproject-inc/fork-vercel-builder",
+  "version": "0.18.2-fork9",
+  "description": "![vercel-builder](https://user-images.githubusercontent.com/904724/61308402-7a752d00-a7f0-11e9-9502-23731ccd00fd.png)",
+  "homepage": "https://github.com/sinProject-inc/vercel-builder#readme",
   "license": "MIT",
+  "author": "sinProject",
   "exports": {
     ".": "./lib/index.js",
     "./launcher": "./lib/launcher.js"
@@ -66,5 +68,8 @@
     "nuxt": "2.14.12",
     "release-it": "^14.2.2",
     "siroc": "^0.6.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com/"
   }
 }
